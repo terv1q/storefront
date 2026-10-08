@@ -1,0 +1,43 @@
+# What a Docker build must not send to the daemon.
+#
+# The build context is the repository root, because the images are built from a
+# pnpm workspace and both of them need the lockfile and the workspace file that
+# describe it. Ignoring the directories below is what keeps that context small:
+# a node_modules copied from the host is not the one the image installs, and a
+# `.env` copied from the host is a secret left inside a layer.
+
+# Dependencies: installed inside the image, never copied into it.
+node_modules
+**/node_modules
+.pnpm-store
+
+# Environment files. The container receives its configuration as environment
+# variables; nothing here belongs in an image layer.
+.env
+.env.*
+!.env.example
+!.env.docker.example
+!.env.production.example
+
+# Build output, rebuilt inside the image.
+dist
+**/dist
+*.tsbuildinfo
+.vite
+
+# Uploaded review photographs and anything else written at runtime.
+server/uploads
+
+# Version control, editor state, and local notes.
+.git
+.gitignore
+.vscode
+.idea
+.claude
+.mcp.json
+*.log
+
+# Documentation and the checklist are read in the repository, not at runtime.
+CHECKLIST.md
+DEVELOPMENT_PLAN.md
+README.md
