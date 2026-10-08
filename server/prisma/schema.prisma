@@ -1,0 +1,495 @@
+// Ziyo Storefront — Prisma schema.
+//
+// Money is always an integer in minor units (tiyin); 1 so'm is 100 tiyin. No
+// monetary field is a float. `currency` stays explicit on every model that
+// carries money, even though only UZS is used today.
+//
+// Catalogue text is per-locale. Every translatable column has a `Ru` and a `Uz`
+// sibling — `name` and `nameRu`, `description` and `descriptionUz` — rather than
+// a translation table or a JSON blob. Three reasons: the Prisma selects stay
+// typed, Postgres can index the translated text directly, which is what the
+// search rewrite needs, and the fallback is a plain `COALESCE`, decided in the
+// service that reads the row instead of in a join.
+//
+// The base column is English and is never null. A `Ru`/`Uz` column is nullable
+// on purpose: null means "not translated yet", and the reader falls back to the
+// English value. The seed refuses to write a catalogue that has any gaps, so the
+// fallback exists for a database edited by hand, not for the normal state.
+// `OrderItem.name` is deliberately outside this scheme — it is a snapshot of
+// what was bought, in the language the order was placed in.
+//
+// Deletion behaviour is deliberate:
+//   - a product may be deleted without damaging order history (order items keep
+//     their name and price snapshot and only lose the product link),
+//   - a user may be deleted without removing their orders,
+//   - content owned by a user (addresses, reviews, wishlist items) goes with them,
+//   - a category that still holds products cannot be deleted.
+//
+// Prisma 7 keeps the connection URL out of this file: migrations read it from
+// `prisma.config.ts`, and the runtime client uses the pg driver adapter set up
+// in `src/database/index.ts`.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+  FAILED
+  REFUNDED
+}
+
+/// Payment is simulated in the first version, so this stays short.
+enum PaymentMethod {
+  CARD
+  CASH
+}
+
+enum DeliveryMethod {
+  COURIER
+  PICKUP
+}
+
+/// How a promotion takes money off an order.
+enum PromoDiscountType {
+  /// `discountValue` is a whole percentage of the subtotal, 1 to 100.
+  PERCENT
+  /// `discountValue` is an amount in minor units.
+  FIXED
+}
+
+// ---------------------------------------------------------------------------
+// Accounts
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  phone        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  orders        Order[]
+  addresses     Address[]
+  reviews       Review[]
+  reviewVotes   ReviewVote[]
+  wishlistItems WishlistItem[]
+}
+
+model Address {
+  id         String  @id @default(uuid())
+  userId     String
+  label      String?
+  fullName   String
+  phone      String
+  country    String
+  city       String
+  street     String
+  postalCode String?
+  isDefault  Boolean @default(false)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Catalog
+// ---------------------------------------------------------------------------
+
+model Category {
+  id            String  @id @default(uuid())
+  name          String
+  nameRu        String?
+  nameUz        String?
+  slug          String  @unique
+  description   String?
+  descriptionRu String?
+  descriptionUz String?
+  imageUrl      String?
+  parentId      String?
+  sortOrder     Int     @default(0)
+  isActive      Boolean @default(true)
+
+  parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children Category[] @relation("CategoryHierarchy")
+  products Product[]
+
+  @@index([parentId, sortOrder])
+  // Backs the category half of the search suggestions, in all three languages.
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([nameRu(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([nameUz(ops: raw("gin_trgm_ops"))], type: Gin)
+}
+
+model Brand {
+  id        String  @id @default(uuid())
+  name      String
+  nameRu    String?
+  nameUz    String?
+  slug      String  @unique
+  tagline   String?
+  taglineRu String?
+  taglineUz String?
+  logoUrl   String?
+
+  products Product[]
+
+  // Backs the brand half of the search suggestions, in all three languages.
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([nameRu(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([nameUz(ops: raw("gin_trgm_ops"))], type: Gin)
+}
+
+model Product {
+  id                 String   @id @default(uuid())
+  name               String
+  nameRu             String?
+  nameUz             String?
+  slug               String   @unique
+  description        String
+  descriptionRu      String?
+  descriptionUz      String?
+  shortDescription   String?
+  shortDescriptionRu String?
+  shortDescriptionUz String?
+  categoryId         String
+  brandId            String?
+  price              Int
+  compareAtPrice     Int?
+  currency           String   @default("UZS")
+  sku                String   @unique
+  stock              Int      @default(0)
+  rating             Float    @default(0)
+  reviewCount        Int      @default(0)
+  isActive           Boolean  @default(true)
+  isFeatured         Boolean  @default(false)
+  isNew              Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  // A category that still holds products cannot be deleted.
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  brand    Brand?   @relation(fields: [brandId], references: [id], onDelete: SetNull)
+
+  images             ProductImage[]
+  variants           ProductVariant[]
+  specs              ProductSpec[]
+  reviews            Review[]
+  wishlistItems      WishlistItem[]
+  orderItems         OrderItem[]
+  // Addresses waiting for this product to come back in stock.
+  stockNotifications StockNotification[]
+
+  @@index([categoryId, isActive])
+  @@index([brandId])
+  @@index([isFeatured])
+  @@index([createdAt])
+  // Trigram indexes. They are what makes the `ILIKE '%term%'` search in
+  // Stage 10 use an index instead of scanning every product row, and they are
+  // what the cross-language fuzzy search of the multilingual catalogue reads.
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([nameRu(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([nameUz(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([shortDescription(ops: raw("gin_trgm_ops"))], type: Gin)
+}
+
+model ProductImage {
+  id        String  @id @default(uuid())
+  productId String
+  url       String
+  alt       String?
+  sortOrder Int     @default(0)
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, sortOrder])
+}
+
+model ProductVariant {
+  id         String  @id @default(uuid())
+  productId  String
+  name       String
+  nameRu     String?
+  nameUz     String?
+  value      String
+  valueRu    String?
+  valueUz    String?
+  priceDelta Int     @default(0)
+  stock      Int     @default(0)
+  sku        String
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+}
+
+model ProductSpec {
+  id        String  @id @default(uuid())
+  productId String
+  group     String
+  groupRu   String?
+  groupUz   String?
+  label     String
+  labelRu   String?
+  labelUz   String?
+  value     String
+  valueRu   String?
+  valueUz   String?
+  sortOrder Int     @default(0)
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, sortOrder])
+}
+
+model Review {
+  id         String   @id @default(uuid())
+  productId  String
+  userId     String
+  rating     Int
+  title      String?
+  body       String
+  isApproved Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  product Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  images  ReviewImage[]
+  votes   ReviewVote[]
+
+  // One review per user per product.
+  @@unique([productId, userId])
+  @@index([productId, isApproved])
+}
+
+/**
+ * A photograph attached to a review. The file itself lives on disk under
+ * `UPLOAD_DIR`; this row is the name it was stored under and the order it is
+ * shown in.
+ */
+model ReviewImage {
+  id        String   @id @default(uuid())
+  reviewId  String
+  url       String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@index([reviewId, sortOrder])
+}
+
+/**
+ * One customer's opinion of one review: helpful, or not.
+ *
+ * The row is the vote, and its absence is having no opinion, which is why a
+ * customer cannot vote twice — the unique pair is the rule, and changing a vote
+ * updates the row rather than adding another.
+ */
+model ReviewVote {
+  id        String   @id @default(uuid())
+  reviewId  String
+  userId    String
+  value     Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewId, userId])
+  @@index([reviewId])
+}
+
+model WishlistItem {
+  id        String   @id @default(uuid())
+  userId    String
+  productId String
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId])
+  @@index([productId])
+}
+
+// An address waiting to hear that a sold-out product is back.
+//
+// It is not tied to an account: a shopper who finds a product sold out is
+// usually not signed in, and asking them to register before they can be told
+// about the one thing they wanted is how the notification never gets asked for.
+// The unique pair is what makes a second request from the same address a no-op
+// rather than a second row.
+model StockNotification {
+  id        String   @id @default(uuid())
+  productId String
+  email     String
+  createdAt DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, email])
+  @@index([productId])
+}
+
+// ---------------------------------------------------------------------------
+// Delivery
+// ---------------------------------------------------------------------------
+
+// What a postal code says about how long a parcel takes and what it costs.
+//
+// A zone is a range of postal codes rather than a list, because that is how a
+// postal service hands them out: `100000`–`100214` is Tashkent and nothing else
+// is, so a range answers a code nobody enumerated. The pairs may not overlap —
+// which one wins would otherwise depend on the order the rows came back in, and
+// a shopper's delivery window would be a coin toss.
+//
+// The name is translatable like every other catalogue row, because the zone is
+// shown to the shopper: "Tashkent, 1–2 days" is a sentence about their order.
+model DeliveryZone {
+  id   String @id @default(uuid())
+  code String @unique
+  name String
+  // Null until a translation is written; the read falls back to the English.
+  nameRu String?
+  nameUz String?
+
+  // Inclusive postal-code range, compared as whole numbers.
+  zipFrom Int
+  zipTo   Int
+
+  deliveryDaysMin Int
+  deliveryDaysMax Int
+  // Minor units, as everywhere else money is stored.
+  fee             Int
+  pickupAvailable Boolean @default(false)
+
+  sortOrder Int @default(0)
+
+  @@index([zipFrom])
+}
+
+// ---------------------------------------------------------------------------
+// Orders
+// ---------------------------------------------------------------------------
+
+/// A code a shopper types at checkout to take money off the subtotal.
+///
+/// Deliberately small: a code is a percentage or a fixed amount, it may be
+/// limited to a window and to a minimum subtotal, and it is switched off rather
+/// than deleted. What it is *not* is a per-customer allowance or a campaign
+/// engine — a `usedCount` or a rule table would be the first step of one, and no
+/// screen asks for either.
+model PromoCode {
+  id String @id @default(uuid())
+  /// Stored uppercase and compared uppercase: a code is something a shopper
+  /// types, and `save10` and `SAVE10` are the same code to them.
+  code String @unique
+
+  discountType  PromoDiscountType
+  /// Whole percent for `PERCENT`, minor units for `FIXED`.
+  discountValue Int
+  /// Ceiling in minor units for a percentage. Null means no ceiling.
+  maxDiscount  Int?
+  /// Minor units the subtotal has to reach before the code applies at all.
+  minSubtotal  Int                @default(0)
+
+  isActive  Boolean   @default(true)
+  /// Optional window. A null bound means "no bound on that side".
+  startsAt  DateTime?
+  expiresAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+}
+
+model Order {
+  id          String      @id @default(uuid())
+  orderNumber String      @unique
+  // Null once the account that placed the order is deleted; the order itself
+  // stays readable.
+  userId      String?
+  status      OrderStatus @default(PENDING)
+
+  subtotal      Int
+  // What the shopper saved against the compare-at prices of the day. It is a
+  // record of a saving, not a deduction: `unitPrice` is already the price being
+  // charged, so this column is never subtracted from `subtotal`.
+  discountTotal Int    @default(0)
+  // The code that was used, as it was written at checkout, and what it took
+  // off. Stored as text rather than as a relation so an order keeps saying what
+  // was applied to it after the code is switched off or deleted.
+  promoCode     String?
+  promoDiscount Int    @default(0)
+  shippingTotal Int    @default(0)
+  total         Int
+  currency      String @default("UZS")
+
+  // Snapshot of the customer and the delivery address at checkout.
+  customerName       String
+  customerEmail      String
+  customerPhone      String
+  shippingCountry    String
+  shippingCity       String
+  shippingStreet     String
+  shippingPostalCode String?
+  notes              String?
+
+  deliveryMethod DeliveryMethod @default(COURIER)
+  paymentMethod  PaymentMethod
+  paymentStatus  PaymentStatus  @default(UNPAID)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  items OrderItem[]
+
+  @@index([userId, createdAt])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id        String  @id @default(uuid())
+  orderId   String
+  // Nullable so a deleted product never removes the order line. `name` and
+  // `unitPrice` are the snapshot that keeps old orders correct.
+  productId String?
+  name      String
+  unitPrice Int
+  quantity  Int
+  lineTotal Int
+
+  order   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([productId])
+}

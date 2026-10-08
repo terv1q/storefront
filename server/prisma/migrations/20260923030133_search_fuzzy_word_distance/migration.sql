@@ -1,0 +1,11 @@
+-- Spell tolerance for short words.
+--
+-- `pg_trgm` measures how much two strings share in the way of letter triples,
+-- which is the right measure for a long word and a poor one for a short word: a
+-- transposition inside a five-letter word destroys most of its trigrams, so
+-- `shrit` scores barely above `shampoo` against `shirt`. Levenshtein distance,
+-- which counts single-character edits, separates the two correctly.
+--
+-- `fuzzystrmatch` is the contrib module that provides it. It ships with the
+-- standard Postgres distribution and needs no configuration.
+CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;
