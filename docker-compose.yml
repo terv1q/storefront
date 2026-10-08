@@ -1,0 +1,158 @@
+# The whole stack, in one file.
+#
+# Four services that have to start in a particular order, and the file says so:
+# the database reports healthy first, then a one-shot container applies the
+# migrations and exits, then the API starts, then the web server. A deployment
+# that starts the API before the database is ready is a deployment that answers
+# 503 until somebody restarts it, and `depends_on` with a condition is how that
+# is avoided without a retry loop inside the application.
+#
+# Values come from an environment file that is not committed. Copy
+# `.env.docker.example` to `.env.docker` and fill it in, then run:
+#
+#   docker compose --env-file .env.docker up --build
+#
+# Two secrets have no default and the file refuses to start without them: a
+# password that is written in a repository is not a password, and the API
+# already refuses the example JWT secret in production.
+
+name: ziyo
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-storefront}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.docker}
+      POSTGRES_DB: ${POSTGRES_DB:-storefront}
+      # The seed and the API write in Uzbek, Russian, and English, and a
+      # database created with the wrong collation sorts them unpredictably.
+      POSTGRES_INITDB_ARGS: --encoding=UTF8
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` answers for a server that is accepting connections, which
+      # is the moment the migrations may run — not the moment the container
+      # started. The others wait on this condition rather than on the process.
+      test:
+        ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-storefront} -d ${POSTGRES_DB:-storefront}']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    # Uncomment to reach the database from the host, for inspection with a local
+    # client. Nothing in the stack needs the port published, and publishing it
+    # exposes the database to whatever else is on the network.
+    # ports:
+    #   - '${POSTGRES_PORT:-5432}:5432'
+
+  # Applies the migrations and exits. It is built from the `builder` stage of
+  # the API image rather than the runtime one, because `prisma migrate deploy`
+  # needs the CLI, which is a development dependency and deliberately absent
+  # from the image that serves traffic. Running this as its own service is what
+  # makes a release step a step: the API never migrates on boot, so a rollback
+  # is a change of image rather than a change of database.
+  migrate:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+      target: builder
+    working_dir: /app/server
+    command: pnpm exec prisma migrate deploy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-storefront}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-storefront}?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+      target: runtime
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: '4000'
+      DATABASE_URL: postgresql://${POSTGRES_USER:-storefront}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-storefront}?schema=public
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env.docker}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      # The address the browser loads the storefront from. Nginx brings the API
+      # to that same origin, so this is one origin and not two.
+      CLIENT_ORIGIN: ${CLIENT_ORIGIN:-http://localhost:8080}
+      # One proxy sits in front of the API inside the stack. Without this the
+      # rate limiter would count every request as coming from the nginx
+      # container and the log would name it instead of the visitor.
+      TRUST_PROXY: '1'
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      UPLOAD_DIR: uploads
+    volumes:
+      # Photographs outlive the container that received them.
+      - uploads:/app/server/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  client:
+    build:
+      context: .
+      dockerfile: client/Dockerfile
+      target: runtime
+      args:
+        # Baked into the bundle at build time. The default reaches the API
+        # through this same server, which is what keeps the deployment to one
+        # origin.
+        VITE_API_URL: ${VITE_API_URL:-/api}
+    restart: unless-stopped
+    ports:
+      - '${CLIENT_PORT:-8080}:80'
+    depends_on:
+      - server
+
+  # Inspecting the database by hand. Not started by `up` — a browser tool that
+  # can read every table is not something to run by default:
+  #
+  #   docker compose --env-file .env.docker --profile tools up -d adminer
+  adminer:
+    image: adminer:5
+    profiles: ['tools']
+    restart: unless-stopped
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    ports:
+      - '${ADMINER_PORT:-8081}:8080'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Filling an empty database with the catalogue. Also under the tools profile,
+  # because a seed run on a database that already holds orders is not something
+  # a stack should decide to do on its own:
+  #
+  #   docker compose --env-file .env.docker --profile tools run --rm seed
+  seed:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+      target: builder
+    profiles: ['tools']
+    working_dir: /app/server
+    command: pnpm exec prisma db seed
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-storefront}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-storefront}?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: 'no'
+
+volumes:
+  # Named rather than anonymous: `up` twice must not create a second database.
+  pgdata:
+  uploads:
