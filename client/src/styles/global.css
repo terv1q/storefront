@@ -1,0 +1,210 @@
+@import 'tailwindcss';
+@import './tokens.css';
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-surface font-sans text-base leading-relaxed text-ink-800;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply font-semibold text-ink-900;
+    text-wrap: balance;
+  }
+
+  h1 {
+    @apply text-3xl;
+  }
+
+  h2 {
+    @apply text-2xl;
+  }
+
+  h3 {
+    @apply text-xl;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  a {
+    @apply text-brand-700 underline-offset-2;
+  }
+
+  a:hover {
+    @apply text-brand-800 underline;
+  }
+
+  /* One focus treatment for the whole app, only for keyboard navigation. */
+  :focus-visible {
+    outline: 2px solid var(--color-brand-600);
+    outline-offset: 2px;
+    border-radius: var(--radius-control);
+  }
+
+  img,
+  picture,
+  video {
+    @apply block max-w-full;
+    height: auto;
+  }
+
+  svg {
+    @apply inline-block shrink-0;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+
+  :disabled,
+  [aria-disabled='true'] {
+    cursor: not-allowed;
+  }
+
+  ::placeholder {
+    @apply text-ink-400;
+  }
+}
+
+/*
+ * Layering utilities.
+ *
+ * The scale is declared in `tokens.css` as plain custom properties rather than
+ * in the theme block, because z-index has no namespace of its own, so Tailwind
+ * does not build utilities from those names. Each one is therefore declared
+ * here against its token, which keeps the values in one place and the class
+ * names readable at the point of use.
+ */
+@utility z-base {
+  z-index: var(--z-base);
+}
+@utility z-sticky {
+  z-index: var(--z-sticky);
+}
+@utility z-header {
+  z-index: var(--z-header);
+}
+@utility z-overlay {
+  z-index: var(--z-overlay);
+}
+@utility z-drawer {
+  z-index: var(--z-drawer);
+}
+@utility z-modal {
+  z-index: var(--z-modal);
+}
+@utility z-toast {
+  z-index: var(--z-toast);
+}
+
+/*
+ * The panels that hang off the header: the search suggestions, the account menu,
+ * and the basket preview. They arrive and leave instead of appearing, which is
+ * what tells the eye where they came from.
+ *
+ * Radix publishes the point the panel should grow from — the corner nearest its
+ * trigger, or the side it opened on — as a custom property named after the
+ * primitive. Each primitive sets its own name, so the origin is read from
+ * whichever one rendered the panel, falling back to the centre.
+ *
+ * Radix keeps a closing panel mounted until its exit animation finishes, so the
+ * outgoing half is a `[data-state='closed']` rule on the same element rather
+ * than a separate element. The reduced-motion override below already collapses
+ * both directions to nothing.
+ */
+@layer components {
+  @keyframes overlay-panel-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97) translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+
+  @keyframes overlay-panel-out {
+    from {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+    to {
+      opacity: 0;
+      transform: scale(0.97) translateY(-4px);
+    }
+  }
+
+  .overlay-panel {
+    transform-origin: var(
+      --radix-dropdown-menu-content-transform-origin,
+      var(--radix-popover-content-transform-origin, center)
+    );
+    animation: overlay-panel-in 140ms ease-out;
+  }
+
+  .overlay-panel[data-state='closed'] {
+    animation: overlay-panel-out 110ms ease-in;
+  }
+}
+
+/*
+ * The cart badge announces a change by pulsing once, when the count rises. It is
+ * a single run rather than a loop, so a badge left on screen is still.
+ */
+@layer components {
+  @keyframes badge-pulse {
+    0% {
+      transform: scale(1);
+      box-shadow: 0 0 0 0 rgb(106 0 154 / 0.45);
+    }
+    70% {
+      transform: scale(1.25);
+      box-shadow: 0 0 0 6px rgb(106 0 154 / 0);
+    }
+    100% {
+      transform: scale(1);
+      box-shadow: 0 0 0 0 rgb(106 0 154 / 0);
+    }
+  }
+
+  .animate-badge-pulse {
+    animation: badge-pulse 600ms ease-out 1;
+  }
+}
+
+/*
+ * Motion is decoration here. Anyone who has asked the system for less of it gets
+ * state changes without the travel: the elements still appear, move, and settle,
+ * they just do it at once.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

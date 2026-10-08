@@ -1,0 +1,138 @@
+/*
+ * Ziyo design tokens.
+ *
+ * Everything in the @theme block below is emitted both as a Tailwind utility
+ * source and as a CSS custom property on :root, so components and plain CSS
+ * read the same values.
+ *
+ * Namespaces in use:
+ *   --color-*        colours            -> bg-*, text-*, border-*
+ *   --font-*         font family        -> font-*
+ *   --text-*         font size          -> text-*
+ *   --radius-*       corner radius      -> rounded-*
+ *   --shadow-*       box shadow         -> shadow-*
+ *   --spacing-*      spacing and sizes  -> p-*, m-*, gap-*, w-*, h-*
+ *   --container-*    maximum widths     -> max-w-*
+ *
+ * Tailwind has no z-index namespace, so the layering scale is declared as
+ * plain custom properties in the :root block at the end of this file.
+ */
+
+@theme {
+  /* Brand. Sampled from the logo assets: 600 is the lockup purple, 700 the dark mark, 400 the
+     light purple used on dark backgrounds. Primary actions, links, focus rings. */
+  --color-brand-50: #faf5ff;
+  --color-brand-100: #f3e4fe;
+  --color-brand-200: #e7c8fd;
+  --color-brand-300: #d6a2fa;
+  --color-brand-400: #c46ff5;
+  --color-brand-500: #a935e0;
+  --color-brand-600: #6a009a;
+  --color-brand-700: #54007b;
+  --color-brand-800: #430063;
+  --color-brand-900: #35004e;
+
+  /* Ink. Warm neutral ramp for text, surfaces, and borders. */
+  --color-ink-50: #f8f8f7;
+  --color-ink-100: #f1f1ef;
+  --color-ink-200: #e4e4e1;
+  --color-ink-300: #cbcbc6;
+  --color-ink-400: #9a9a94;
+  --color-ink-500: #71716b;
+  --color-ink-600: #55554f;
+  --color-ink-700: #3f3f3a;
+  --color-ink-800: #2a2a26;
+  --color-ink-900: #1a1a17;
+
+  /* Accent. Used sparingly, for highlights and badges. */
+  --color-accent-50: #fdf6e6;
+  --color-accent-100: #f9e9c6;
+  --color-accent-500: #c8891b;
+  --color-accent-600: #a56d10;
+  /*
+   * The tone a label on an accent-tinted badge is written in. `accent-600` is a
+   * picture colour: on `accent-50` it measures 4.12:1 and on `accent-100` 3.90:1,
+   * both under the 4.5:1 that text needs, so words go one step darker.
+   */
+  --color-accent-700: #96630f;
+
+  /* Status. */
+  --color-success-50: #ecfdf3;
+  --color-success-600: #157f4a;
+  --color-warning-50: #fffbeb;
+  --color-warning-600: #b45309;
+  /*
+   * The same rule as `accent-700`, for the state that puts words on a tinted
+   * badge: `warning-600` on `warning-50` measures 4.37:1, which is legible for a
+   * border or an icon but not for a sentence.
+   */
+  --color-warning-700: #92400e;
+  --color-danger-50: #fef2f2;
+  --color-danger-600: #b3261e;
+  /* Sale pricing uses a distinct tone from error states. */
+  --color-sale-600: #c2410c;
+
+  /* Surfaces and borders. */
+  --color-surface: #ffffff;
+  --color-surface-muted: #f8f8f7;
+  --color-border: #e4e4e1;
+  --color-border-strong: #cbcbc6;
+
+  /* Typography. System stack, no web font dependency. */
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+
+  /* Display sizes for hero and section headlines. Body sizes stay at Tailwind defaults. */
+  --text-display-sm: 1.75rem;
+  --text-display-sm--line-height: 1.2;
+  --text-display-sm--letter-spacing: -0.01em;
+  --text-display-md: 2.25rem;
+  --text-display-md--line-height: 1.15;
+  --text-display-md--letter-spacing: -0.02em;
+  --text-display-lg: 3rem;
+  --text-display-lg--line-height: 1.1;
+  --text-display-lg--letter-spacing: -0.02em;
+
+  /* Moderate radii: controls and cards stay tight, panels round further. */
+  --radius-control: 0.5rem;
+  --radius-card: 0.75rem;
+  --radius-panel: 1rem;
+
+  /* Subtle shadows. Raised elements get a light lift, not drama. */
+  --shadow-card: 0 1px 2px rgb(26 26 23 / 0.04), 0 1px 3px rgb(26 26 23 / 0.06);
+  --shadow-raised: 0 4px 10px -2px rgb(26 26 23 / 0.08), 0 2px 4px -2px rgb(26 26 23 / 0.06);
+  --shadow-overlay: 0 12px 32px -8px rgb(26 26 23 / 0.18);
+
+  /* Spacing. The base unit drives every numeric spacing utility. */
+  --spacing: 0.25rem;
+  --spacing-page-x: 1rem;
+  --spacing-section-y: 3rem;
+
+  /* Maximum widths for page content. */
+  --container-page: 80rem;
+  --container-narrow: 45rem;
+}
+
+/* Layering. Values are low on purpose, leaving room for third-party widgets above them. */
+:root {
+  --z-base: 0;
+  --z-sticky: 20;
+  --z-header: 30;
+  --z-overlay: 40;
+  --z-drawer: 50;
+  --z-modal: 60;
+  --z-toast: 70;
+}
+
+@media (min-width: 48rem) {
+  :root {
+    --spacing-page-x: 1.5rem;
+    --spacing-section-y: 4rem;
+  }
+}
+
+@media (min-width: 80rem) {
+  :root {
+    --spacing-page-x: 2rem;
+  }
+}
